@@ -1,0 +1,335 @@
+-- ============================================================
+--  HOTEL BOOKING DEMAND – SQL ANALYSIS QUERIES
+--  Table  : hotel_bookings
+--  Engine : SQLite / PostgreSQL / MySQL compatible
+-- ============================================================
+
+-- ─── TABLE SETUP (SQLite) ────────────────────────────────────
+-- CREATE TABLE hotel_bookings (
+--   Booking_ID              TEXT,
+--   Hotel                   TEXT,
+--   Arrival_Date            TEXT,
+--   Arrival_Month           TEXT,
+--   Lead_Time               INTEGER,
+--   Stays_Weekend_Nights    INTEGER,
+--   Stays_Week_Nights       INTEGER,
+--   Adults                  INTEGER,
+--   Children                INTEGER,
+--   Country                 TEXT,
+--   Market_Segment          TEXT,
+--   Distribution_Channel    TEXT,
+--   Is_Repeated_Guest       TEXT,
+--   Previous_Cancellations  INTEGER,
+--   Reserved_Room_Type      TEXT,
+--   ADR                     REAL,
+--   Booking_Status          TEXT,
+--   Total_Special_Requests  INTEGER,
+--   Customer_Type           TEXT,
+--   Revenue                 REAL
+-- );
+
+
+-- ════════════════════════════════════════════════════════════
+-- 1. MONTHLY BOOKING TRENDS
+-- ════════════════════════════════════════════════════════════
+
+-- 1a. Total bookings per month
+SELECT
+    Arrival_Month,
+    COUNT(*)                                          AS Total_Bookings,
+    SUM(CASE WHEN Booking_Status = 'Check-Out' THEN 1 ELSE 0 END) AS CheckOuts,
+    SUM(CASE WHEN Booking_Status = 'Canceled'  THEN 1 ELSE 0 END) AS Cancellations,
+    SUM(CASE WHEN Booking_Status = 'No-Show'   THEN 1 ELSE 0 END) AS NoShows
+FROM hotel_bookings
+GROUP BY Arrival_Month
+ORDER BY
+    CASE Arrival_Month
+        WHEN 'January'   THEN 1  WHEN 'February'  THEN 2
+        WHEN 'March'     THEN 3  WHEN 'April'     THEN 4
+        WHEN 'May'       THEN 5  WHEN 'June'      THEN 6
+        WHEN 'July'      THEN 7  WHEN 'August'    THEN 8
+        WHEN 'September' THEN 9  WHEN 'October'   THEN 10
+        WHEN 'November'  THEN 11 WHEN 'December'  THEN 12
+    END;
+
+
+-- 1b. Month-over-month change in bookings
+WITH monthly AS (
+    SELECT
+        Arrival_Month,
+        CASE Arrival_Month
+            WHEN 'January' THEN 1 WHEN 'February'  THEN 2
+            WHEN 'March'   THEN 3 WHEN 'April'     THEN 4
+            WHEN 'May'     THEN 5 WHEN 'June'      THEN 6
+            WHEN 'July'    THEN 7 WHEN 'August'    THEN 8
+            WHEN 'September' THEN 9 WHEN 'October' THEN 10
+            WHEN 'November'  THEN 11 WHEN 'December' THEN 12
+        END AS Month_Num,
+        COUNT(*) AS Bookings
+    FROM hotel_bookings
+    GROUP BY Arrival_Month
+)
+SELECT
+    Arrival_Month,
+    Bookings,
+    LAG(Bookings) OVER (ORDER BY Month_Num)           AS Prev_Month_Bookings,
+    ROUND(
+        (Bookings - LAG(Bookings) OVER (ORDER BY Month_Num)) * 100.0
+        / NULLIF(LAG(Bookings) OVER (ORDER BY Month_Num), 0), 2
+    )                                                  AS MoM_Change_Pct
+FROM monthly
+ORDER BY Month_Num;
+
+
+-- ════════════════════════════════════════════════════════════
+-- 2. CANCELLATION RATES
+-- ════════════════════════════════════════════════════════════
+
+-- 2a. Overall cancellation & no-show rates
+SELECT
+    COUNT(*)                                                  AS Total_Bookings,
+    SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1 ELSE 0 END)  AS Cancellations,
+    SUM(CASE WHEN Booking_Status = 'No-Show'  THEN 1 ELSE 0 END)  AS No_Shows,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'No-Show' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS NoShow_Rate_Pct
+FROM hotel_bookings;
+
+
+-- 2b. Cancellation rate by hotel type
+SELECT
+    Hotel,
+    COUNT(*)                                                  AS Total,
+    SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1 ELSE 0 END)  AS Cancellations,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct
+FROM hotel_bookings
+GROUP BY Hotel;
+
+
+-- 2c. Do guests with previous cancellations cancel again?
+SELECT
+    CASE
+        WHEN Previous_Cancellations = 0   THEN '0 – No history'
+        WHEN Previous_Cancellations <= 2  THEN '1–2 prior cancellations'
+        ELSE '3+ prior cancellations'
+    END                                                       AS Prior_Cancel_Group,
+    COUNT(*)                                                  AS Total,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct
+FROM hotel_bookings
+GROUP BY Prior_Cancel_Group
+ORDER BY Cancel_Rate_Pct DESC;
+
+
+-- 2d. Cancellation rate by lead time bucket
+SELECT
+    CASE
+        WHEN Lead_Time <= 7   THEN '0–7 days'
+        WHEN Lead_Time <= 30  THEN '8–30 days'
+        WHEN Lead_Time <= 90  THEN '31–90 days'
+        WHEN Lead_Time <= 180 THEN '91–180 days'
+        ELSE '180+ days'
+    END                                                       AS Lead_Time_Bucket,
+    COUNT(*)                                                  AS Total,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct
+FROM hotel_bookings
+GROUP BY Lead_Time_Bucket
+ORDER BY Cancel_Rate_Pct DESC;
+
+
+-- ════════════════════════════════════════════════════════════
+-- 3. BOOKING CHANNELS & CUSTOMER SEGMENTS
+-- ════════════════════════════════════════════════════════════
+
+-- 3a. Bookings & cancellation by market segment
+SELECT
+    Market_Segment,
+    COUNT(*)                                                  AS Total_Bookings,
+    SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1 ELSE 0 END)  AS Cancellations,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct,
+    ROUND(AVG(Revenue), 2)                                    AS Avg_Revenue
+FROM hotel_bookings
+GROUP BY Market_Segment
+ORDER BY Total_Bookings DESC;
+
+
+-- 3b. Distribution channel revenue & ADR
+SELECT
+    Distribution_Channel,
+    COUNT(*)                                                  AS Bookings,
+    ROUND(AVG(ADR), 2)                                        AS Avg_ADR,
+    ROUND(SUM(Revenue), 2)                                    AS Total_Revenue,
+    ROUND(AVG(Revenue), 2)                                    AS Avg_Revenue_Per_Booking
+FROM hotel_bookings
+WHERE Booking_Status = 'Check-Out'
+GROUP BY Distribution_Channel
+ORDER BY Total_Revenue DESC;
+
+
+-- 3c. Customer type breakdown
+SELECT
+    Customer_Type,
+    COUNT(*)                                                  AS Total_Bookings,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct,
+    ROUND(AVG(ADR), 2)                                        AS Avg_ADR,
+    ROUND(SUM(Revenue), 2)                                    AS Total_Revenue
+FROM hotel_bookings
+GROUP BY Customer_Type
+ORDER BY Total_Revenue DESC;
+
+
+-- ════════════════════════════════════════════════════════════
+-- 4. HOTEL PERFORMANCE & REVENUE
+-- ════════════════════════════════════════════════════════════
+
+-- 4a. KPI summary per hotel
+SELECT
+    Hotel,
+    COUNT(*)                                                          AS Total_Bookings,
+    ROUND(AVG(ADR), 2)                                                AS Avg_ADR,
+    ROUND(SUM(CASE WHEN Booking_Status='Check-Out' THEN Revenue END), 2) AS Total_Revenue,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                                 AS Cancel_Rate_Pct,
+    ROUND(AVG(Stays_Weekend_Nights + Stays_Week_Nights), 2)           AS Avg_Total_Nights
+FROM hotel_bookings
+GROUP BY Hotel;
+
+
+-- 4b. Revenue by room type
+SELECT
+    Reserved_Room_Type,
+    COUNT(*)                                                  AS Bookings,
+    ROUND(AVG(Revenue), 2)                                    AS Avg_Revenue,
+    ROUND(SUM(Revenue), 2)                                    AS Total_Revenue,
+    ROUND(AVG(ADR), 2)                                        AS Avg_ADR
+FROM hotel_bookings
+WHERE Booking_Status = 'Check-Out'
+GROUP BY Reserved_Room_Type
+ORDER BY Total_Revenue DESC;
+
+
+-- 4c. Top 5 countries by revenue
+SELECT
+    Country,
+    COUNT(*)                                                  AS Bookings,
+    ROUND(SUM(Revenue), 2)                                    AS Total_Revenue
+FROM hotel_bookings
+WHERE Booking_Status = 'Check-Out'
+GROUP BY Country
+ORDER BY Total_Revenue DESC
+LIMIT 5;
+
+
+-- ════════════════════════════════════════════════════════════
+-- 5. CUSTOMER BEHAVIOUR & REPEAT GUESTS
+-- ════════════════════════════════════════════════════════════
+
+-- 5a. New vs repeat guest overview
+SELECT
+    CASE Is_Repeated_Guest WHEN 'Yes' THEN 'Repeat Guest' ELSE 'New Guest' END AS Guest_Type,
+    COUNT(*)                                                  AS Total,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct,
+    ROUND(AVG(Revenue), 2)                                    AS Avg_Revenue,
+    ROUND(AVG(ADR), 2)                                        AS Avg_ADR
+FROM hotel_bookings
+GROUP BY Is_Repeated_Guest;
+
+
+-- 5b. Special requests impact on cancellation
+SELECT
+    Total_Special_Requests,
+    COUNT(*)                                                  AS Total_Bookings,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct
+FROM hotel_bookings
+GROUP BY Total_Special_Requests
+ORDER BY Total_Special_Requests;
+
+
+-- 5c. Guest composition – family vs solo/couple
+SELECT
+    CASE
+        WHEN Children > 0     THEN 'Family (with children)'
+        WHEN Adults = 1       THEN 'Solo traveller'
+        ELSE                       'Couple / Small group'
+    END                                                       AS Guest_Profile,
+    COUNT(*)                                                  AS Bookings,
+    ROUND(AVG(Revenue), 2)                                    AS Avg_Revenue,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct
+FROM hotel_bookings
+GROUP BY Guest_Profile
+ORDER BY Bookings DESC;
+
+
+-- ════════════════════════════════════════════════════════════
+-- 6. FACTORS CONTRIBUTING TO DECLINING BOOKINGS (DIAGNOSTICS)
+-- ════════════════════════════════════════════════════════════
+
+-- 6a. Months with high cancellation AND low revenue
+SELECT
+    Arrival_Month,
+    COUNT(*)                                                  AS Total_Bookings,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct,
+    ROUND(SUM(CASE WHEN Booking_Status='Check-Out' THEN Revenue ELSE 0 END), 2)
+                                                              AS Actual_Revenue
+FROM hotel_bookings
+GROUP BY Arrival_Month
+HAVING Cancel_Rate_Pct > 30
+ORDER BY Cancel_Rate_Pct DESC;
+
+
+-- 6b. Segments driving the most lost revenue (canceled bookings)
+SELECT
+    Market_Segment,
+    SUM(CASE WHEN Booking_Status='Canceled' THEN Revenue ELSE 0 END)   AS Lost_Revenue,
+    COUNT(CASE WHEN Booking_Status='Canceled' THEN 1 END)              AS Canceled_Bookings
+FROM hotel_bookings
+GROUP BY Market_Segment
+ORDER BY Lost_Revenue DESC;
+
+
+-- 6c. Long lead-time bookings that eventually cancel
+SELECT
+    CASE
+        WHEN Lead_Time > 90 THEN 'Long Lead (>90 days)'
+        ELSE                     'Short Lead (≤90 days)'
+    END                                                       AS Lead_Bucket,
+    COUNT(*)                                                  AS Total,
+    ROUND(
+        SUM(CASE WHEN Booking_Status = 'Canceled' THEN 1.0 ELSE 0 END)
+        / COUNT(*) * 100, 2
+    )                                                         AS Cancel_Rate_Pct
+FROM hotel_bookings
+GROUP BY Lead_Bucket;
