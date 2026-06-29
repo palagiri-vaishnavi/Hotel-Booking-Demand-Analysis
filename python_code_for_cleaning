@@ -1,0 +1,145 @@
+# ============================================================
+# Hotel Booking Demand - Data Cleaning Script
+# Dataset: hotel_booking_demand_700_rows.csv (700 rows, 20 cols)
+# ============================================================
+
+import pandas as pd
+import numpy as np
+
+# ----------------------------------------------------------
+# 1. LOAD DATA
+# ----------------------------------------------------------
+df = pd.read_csv("data/hotel_booking_demand_700_rows.csv")
+print(f"Original shape: {df.shape}")  # (700, 20)
+
+# ----------------------------------------------------------
+# 2. REMOVE DUPLICATES
+# ----------------------------------------------------------
+df.drop_duplicates(inplace=True)
+print(f"After deduplication: {df.shape}")
+
+# ----------------------------------------------------------
+# 3. FIX DATA TYPES
+# ----------------------------------------------------------
+
+# Convert Arrival_Date to proper datetime
+df["Arrival_Date"] = pd.to_datetime(df["Arrival_Date"], errors="coerce")
+
+# Convert boolean-like columns to actual bool
+df["Is_Repeated_Guest"] = df["Is_Repeated_Guest"].map({"Yes": True, "No": False})
+
+# ----------------------------------------------------------
+# 4. HANDLE MISSING VALUES
+# ----------------------------------------------------------
+
+# This dataset has no nulls, but adding checks for safety
+# In case of future data updates:
+
+# Numeric columns: fill with median
+num_cols = df.select_dtypes(include="number").columns
+df[num_cols] = df[num_cols].fillna(df[num_cols].median())
+
+# Categorical columns: fill with mode
+cat_cols = df.select_dtypes(include="object").columns
+for col in cat_cols:
+    df[col].fillna(df[col].mode()[0], inplace=True)
+
+# ----------------------------------------------------------
+# 5. VALIDATE & CLEAN BUSINESS LOGIC
+# ----------------------------------------------------------
+
+# Rule 1: Total stay must be > 0 (guests must stay at least 1 night)
+df["Total_Nights"] = df["Stays_Weekend_Nights"] + df["Stays_Week_Nights"]
+invalid_stay = df["Total_Nights"] == 0
+print(f"Bookings with 0 total nights: {invalid_stay.sum()}")
+df = df[~invalid_stay]  # Remove zero-night stays
+
+# Rule 2: ADR (Average Daily Rate) must be positive
+invalid_adr = df["ADR"] <= 0
+print(f"Bookings with zero/negative ADR: {invalid_adr.sum()}")
+df = df[~invalid_adr]
+
+# Rule 3: Adults must be at least 1
+invalid_adults = df["Adults"] < 1
+print(f"Bookings with 0 adults: {invalid_adults.sum()}")
+df = df[~invalid_adults]
+
+# Rule 4: Revenue should be 0 for Canceled/No-Show, positive for Check-Out
+# Flag mismatches instead of dropping (for review)
+df["Revenue_Flag"] = np.where(
+    (df["Booking_Status"] == "Check-Out") & (df["Revenue"] == 0),
+    "Check-Out with 0 Revenue",
+    np.where(
+        (df["Booking_Status"].isin(["Canceled", "No-Show"])) & (df["Revenue"] > 0),
+        "Canceled/No-Show with Revenue",
+        "OK"
+    )
+)
+print(df["Revenue_Flag"].value_counts())
+
+# ----------------------------------------------------------
+# 6. STANDARDIZE CATEGORICAL TEXT
+# ----------------------------------------------------------
+
+# Strip whitespace and fix casing for all string columns
+str_cols = df.select_dtypes(include="object").columns
+for col in str_cols:
+    df[col] = df[col].str.strip()
+
+# Standardize column values (example: consistent casing)
+df["Hotel"] = df["Hotel"].str.title()
+df["Market_Segment"] = df["Market_Segment"].str.title()
+df["Distribution_Channel"] = df["Distribution_Channel"].str.title()
+df["Customer_Type"] = df["Customer_Type"].str.title()
+df["Country"] = df["Country"].str.upper()
+
+# ----------------------------------------------------------
+# 7. DERIVE USEFUL COLUMNS (Feature Engineering)
+# ----------------------------------------------------------
+
+# Already created Total_Nights above
+# Month number from Arrival_Date (useful for sorting)
+df["Arrival_Month_Num"] = df["Arrival_Date"].dt.month
+
+# Is the booking cancelled? (binary flag for analysis)
+df["Is_Canceled"] = (df["Booking_Status"] == "Canceled").astype(int)
+
+# Guest count (total people in booking)
+df["Total_Guests"] = df["Adults"] + df["Children"]
+
+# Revenue per night
+df["Revenue_Per_Night"] = np.where(
+    df["Total_Nights"] > 0,
+    (df["Revenue"] / df["Total_Nights"]).round(2),
+    0
+)
+
+# ----------------------------------------------------------
+# 8. REORDER COLUMNS CLEANLY
+# ----------------------------------------------------------
+col_order = [
+    "Booking_ID", "Hotel", "Arrival_Date", "Arrival_Month", "Arrival_Month_Num",
+    "Lead_Time", "Stays_Weekend_Nights", "Stays_Week_Nights", "Total_Nights",
+    "Adults", "Children", "Total_Guests",
+    "Country", "Market_Segment", "Distribution_Channel",
+    "Is_Repeated_Guest", "Previous_Cancellations",
+    "Reserved_Room_Type", "ADR",
+    "Booking_Status", "Is_Canceled",
+    "Total_Special_Requests", "Customer_Type",
+    "Revenue", "Revenue_Per_Night", "Revenue_Flag"
+]
+df = df[col_order]
+
+# ----------------------------------------------------------
+# 9. FINAL SUMMARY
+# ----------------------------------------------------------
+print(f"\n✅ Cleaned shape: {df.shape}")
+print(f"Columns: {list(df.columns)}")
+print(f"\nData types:\n{df.dtypes}")
+print(f"\nNull values after cleaning:\n{df.isnull().sum()}")
+
+# ----------------------------------------------------------
+# 10. EXPORT CLEANED FILE
+# ----------------------------------------------------------
+df.to_csv("hotel_booking_demand_cleaned.csv", index=False)
+print("\n✅ Saved: hotel_booking_demand_cleaned.csv")
